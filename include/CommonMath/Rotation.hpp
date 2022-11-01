@@ -135,6 +135,11 @@ class Rotation {
     return Rotate(vec);
   }
 
+  //! Rotate a vector backward
+  Vec3 operator/(const Vec3& vec) const {
+    return RotateBackwards(vec);
+  }
+
   /*! Returns the rotation vector corresponding to this rotation, where
    * the returned vector is the rotation axis and its magnitude is the
    * rotation angle.

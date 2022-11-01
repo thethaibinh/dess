@@ -1,4 +1,3 @@
-add_library(RAPPIDS DepthImagePlanner.cpp)
+add_library(dess SteeringPlanner.cpp PlannerNode.cpp)
 add_library(RapidQuadcopterTrajectories RapidTrajectoryGenerator.cpp SingleAxisTrajectory.cpp)
 add_library(Quartic quartic.cpp)
-include_directories(${RAPPIDS_project_SOURCE_DIR}/include)

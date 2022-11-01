@@ -49,6 +49,10 @@ class Pyramid {
         topPixBound(edgesIn[1]),
         leftPixBound(edgesIn[2]),
         bottomPixBound(edgesIn[3]) {
+    _corners[0] = corners[0];
+    _corners[1] = corners[1];
+    _corners[2] = corners[2];
+    _corners[3] = corners[3];
     planeNormals[0] = corners[0].Cross(corners[1]).GetUnitVector();
     planeNormals[1] = corners[1].Cross(corners[2]).GetUnitVector();
     planeNormals[2] = corners[2].Cross(corners[3]).GetUnitVector();
@@ -78,5 +82,6 @@ class Pyramid {
   int bottomPixBound;
   //! Unit normals of the lateral faces of the pyramid
   CommonMath::Vec3 planeNormals[4];
+  CommonMath::Vec3 _corners[4];
 };
 }  // namespace RectangularPyramidPlanner
