@@ -48,6 +48,8 @@ DepthImagePlanner::DepthImagePlanner(cv::Mat depthImage, double depthScale,
       _maxNumPyramids(std::numeric_limits<int>::max()),  // Don't limit the number of generated pyramids by default
       _allocatedComputationTime(0),  // To be set when the planner is called
       _numTrajectoriesGenerated(0),
+      _numCollisionFreeTrajectories(0),
+      _best_cost(0),
       _numCollisionChecks(0),
       _pyramidSearchPixelBuffer(2)  // A sample point must be more than 2 pixels away from the edge of a pyramid to use that pyramid for collision checking
 {
@@ -56,12 +58,14 @@ DepthImagePlanner::DepthImagePlanner(cv::Mat depthImage, double depthScale,
 
 bool DepthImagePlanner::FindFastestTrajRandomCandidates(
     RapidQuadrocopterTrajectoryGenerator::RapidTrajectoryGenerator& trajectory,
-    double allocatedComputationTime, CommonMath::Vec3 explorationDirection) {
+    double allocatedComputationTime, CommonMath::Vec3 explorationDirection,
+    bool depth_based) {
 
   ExplorationCost explorationCost(explorationDirection);
   return FindLowestCostTrajectoryRandomCandidates(
       trajectory, allocatedComputationTime, &explorationCost,
-      &ExplorationCost::ExplorationDirectionCostWrapper);
+      &ExplorationCost::ExplorationDirectionCostWrapper,
+      depth_based);
 }
 
 bool DepthImagePlanner::FindLowestCostTrajectoryRandomCandidates(
@@ -70,8 +74,16 @@ bool DepthImagePlanner::FindLowestCostTrajectoryRandomCandidates(
     void* costFunctionDefinitionObject,
     double (*costFunctionWrapper)(
         void* costFunctionDefinitionObject,
-        RapidQuadrocopterTrajectoryGenerator::RapidTrajectoryGenerator&)) {
-
+        RapidQuadrocopterTrajectoryGenerator::RapidTrajectoryGenerator&),
+    bool depth_based) {
+  if (depth_based)
+  {
+    DepthBasedTrajectoryGenerator trajGenObj(this);
+    return FindLowestCostTrajectory(
+        trajectory, allocatedComputationTime, costFunctionDefinitionObject,
+        costFunctionWrapper, (void*) &trajGenObj,
+        &DepthBasedTrajectoryGenerator::GetNextCandidateTrajectoryWrapper);
+  }
   RandomTrajectoryGenerator trajGenObj(this);
   return FindLowestCostTrajectory(
       trajectory, allocatedComputationTime, costFunctionDefinitionObject,
@@ -144,8 +156,10 @@ bool DepthImagePlanner::FindLowestCostTrajectory(
         bool isCollisionFree = IsCollisionFree(candidateTraj.GetTrajectory());
         _numCollisionChecks++;
         if (isCollisionFree) {
+          _numCollisionFreeTrajectories++;
           feasibleTrajFound = true;
           bestCost = cost;
+          _best_cost = cost;
           trajectory = RapidTrajectoryGenerator(candidateTraj);
         }
       }
@@ -936,6 +950,7 @@ void DepthImagePlanner::MeasureConservativeness(
   // Run our collision checker and compare to the results of the ground truth ray-tracing based method
   for (auto candidateTraj : trajs) {
     _startTime = std::chrono::high_resolution_clock::now();  // Prevents collision checking from ending early due to timing constraints
+    _allocatedComputationTime = 1000;
     bool collidesPlanner = !IsCollisionFree(candidateTraj);
     bool collidesGroundTruth = !IsCollisionFreeGroundTruth(candidateTraj);
     if (collidesGroundTruth && collidesPlanner) {
@@ -949,7 +964,7 @@ void DepthImagePlanner::MeasureConservativeness(
 void DepthImagePlanner::MeasureCollisionCheckingSpeed(
     int numTrajToEvaluate, double pyramidGenTimeLimit,
     RapidQuadrocopterTrajectoryGenerator::RapidTrajectoryGenerator& trajectory,
-    double &outTotalCollCheckTimeNs) {
+    double &outTotalCollCheckTimeNs, double &outPercentCollisionFree) {
   // The test described in Section IV.B of the RAPPIDS paper
 
   SetMaxPyramidGenTime(pyramidGenTimeLimit);
@@ -963,14 +978,28 @@ void DepthImagePlanner::MeasureCollisionCheckingSpeed(
     trajs.push_back(trajectory.GetTrajectory());
   }
 
+  int numCollisionFree = 0;
+  bool hasFeasTraj = false;
+
   outTotalCollCheckTimeNs = 0;
   for (auto candidateTraj : trajs) {
     _startTime = std::chrono::high_resolution_clock::now();  // Prevents collision checking from ending early due to timing constraints
-    IsCollisionFree(candidateTraj);
+    _allocatedComputationTime = 1000;
+    bool isCollisionFree = IsCollisionFree(candidateTraj);
     outTotalCollCheckTimeNs += duration_cast<nanoseconds>(
         high_resolution_clock::now() - _startTime).count();
+    if (isCollisionFree) {
+      numCollisionFree++;
+      hasFeasTraj = true;
+    }
   }
   outTotalCollCheckTimeNs -= _pyramidGenTimeNanoseconds;  // Don't count time spent generating pyramids
+  outPercentCollisionFree = double(numCollisionFree)
+      / double(numTrajToEvaluate);
+
+  if (hasFeasTraj) {
+    outPercentCollisionFree = 1;
+  }
 }
 
 bool DepthImagePlanner::IsCollisionFreeGroundTruth(Trajectory trajectory) {

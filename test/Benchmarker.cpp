@@ -209,201 +209,6 @@ static void make_image(const camera_intrinsics_t& camera_intrinsics,
   out_depth_frame = depth_mat;
 }
 
-static void run_conservativeness_benchmark(
-    const camera_intrinsics_t& camera_intrinsics,
-    const planner_specs_t& planner_specs,
-    const synthesis_specs_t& synthesis_specs,
-    const benchmark_options_t& benchmark_options,
-    const conservative_test_options_t& conservative_test_options,
-    boost::property_tree::ptree& root) {
-
-  if (benchmark_options.display) {
-    cv::namedWindow("display", cv::WINDOW_AUTOSIZE);
-  }
-
-  // Set up the random number generators
-  std::mt19937 image_rdgen(synthesis_specs.random_seed);
-  std::mt19937 state_rdgen(benchmark_options.random_seed);
-  std::uniform_real_distribution<> random_vx(benchmark_options.vx_min,
-                                             benchmark_options.vx_max);
-  std::uniform_real_distribution<> random_vy(benchmark_options.vy_min,
-                                             benchmark_options.vy_max);
-  std::uniform_real_distribution<> random_vz(benchmark_options.vz_min,
-                                             benchmark_options.vz_max);
-  std::uniform_real_distribution<> random_ay(benchmark_options.ay_min,
-                                             benchmark_options.ay_max);
-
-  // For saving the results
-  boost::property_tree::ptree max_num_pyramids_ptree;
-
-  // Run the test for each given pyramid limit
-  for (int max_allowed_pyramids : conservative_test_options.max_num_pyramids) {
-    int total_incorrect_in_collision = 0;
-    int total_correct_in_collision = 0;
-    std::vector<int> num_pyramids_generated;
-    boost::property_tree::ptree conservativenesss_ptree;
-    for (int i = 0; i < synthesis_specs.num_scenes; i++) {
-      if (i % 20 == 0) {
-        printf("Processed %d frames so far.\n", i);
-      }
-
-      // Set up the test
-      cv::Mat depth_mat;
-      make_image(camera_intrinsics, synthesis_specs, image_rdgen, depth_mat);
-      DepthImagePlanner planner(depth_mat, camera_intrinsics.depth_scale,
-                                camera_intrinsics.f, camera_intrinsics.cx,
-                                camera_intrinsics.cy,
-                                planner_specs.physical_vehicle_radius,
-                                planner_specs.vehicle_radius_for_planning,
-                                planner_specs.minimum_collision_distance);
-      RapidTrajectoryGenerator traj(
-          Vec3(0, 0, 0),
-          Vec3(random_vx(state_rdgen), random_vy(state_rdgen),
-               random_vz(state_rdgen)),
-          Vec3(0, -random_ay(state_rdgen), 0), Vec3(0, 9.81, 0));
-
-      // Run the test
-      int incorrect_in_collision, correct_in_collision;
-      planner.MeasureConservativeness(conservative_test_options.num_traj,
-                                      max_allowed_pyramids, traj,
-                                      incorrect_in_collision,
-                                      correct_in_collision);
-
-      // Store the results
-      total_incorrect_in_collision += incorrect_in_collision;
-      total_correct_in_collision += correct_in_collision;
-      num_pyramids_generated.push_back(planner.GetPyramids().size());
-
-      boost::property_tree::ptree convervativeness_node;
-      convervativeness_node.put_value(
-          double(incorrect_in_collision)
-              / double(incorrect_in_collision + correct_in_collision));
-      conservativenesss_ptree.push_back(
-          std::make_pair("", convervativeness_node));
-
-      if (benchmark_options.png_output) {
-        std::string filename = std::to_string(i) + ".png";
-        imwrite(filename, depth_mat);
-      }
-      if (benchmark_options.display) {
-        display_image(
-            depth_mat,
-            benchmark_options.display_range_min / camera_intrinsics.depth_scale,
-            benchmark_options.display_range_max
-                / camera_intrinsics.depth_scale);
-      }
-    }
-
-    benchmark_stats_t stats_pyramids = calculate_stats<int>(
-        num_pyramids_generated);
-
-    double conservativeness = double(total_incorrect_in_collision)
-        / (total_incorrect_in_collision + total_correct_in_collision);
-
-    printf("\nConservativeness = %f (%d max pyramids)\n", conservativeness,
-           max_allowed_pyramids);
-    print_stats(std::cout, "AvgPyramids", stats_pyramids);
-
-    boost::property_tree::ptree maxPyramidNode;
-    maxPyramidNode.put_value(max_allowed_pyramids);
-    max_num_pyramids_ptree.push_back(
-        std::make_pair("numPyramids", maxPyramidNode));
-    max_num_pyramids_ptree.add_child(
-        "Conservativeness" + std::to_string(max_allowed_pyramids),
-        conservativenesss_ptree);
-
-    root.put_child("MaxNumPyramids", max_num_pyramids_ptree);  // put_child overwrites, unlike add_child.
-
-    std::ofstream json_out("./data/conservativenessTest.json");
-    write_json(json_out, root);
-    json_out.close();
-  }
-}
-
-static void run_collision_checking_time_benchmark(
-    const camera_intrinsics_t& camera_intrinsics,
-    const planner_specs_t& planner_specs,
-    const synthesis_specs_t& synthesis_specs,
-    const benchmark_options_t& benchmark_options,
-    const collision_time_options_t& collision_time_options,
-    boost::property_tree::ptree& root) {
-
-  if (benchmark_options.display) {
-    cv::namedWindow("display", cv::WINDOW_AUTOSIZE);
-  }
-
-  std::mt19937 image_rdgen(synthesis_specs.random_seed);
-  std::mt19937 state_rdgen(benchmark_options.random_seed);
-  std::uniform_real_distribution<> random_vx(benchmark_options.vx_min,
-                                             benchmark_options.vx_max);
-  std::uniform_real_distribution<> random_vy(benchmark_options.vy_min,
-                                             benchmark_options.vy_max);
-  std::uniform_real_distribution<> random_vz(benchmark_options.vz_min,
-                                             benchmark_options.vz_max);
-  std::uniform_real_distribution<> random_ay(benchmark_options.ay_min,
-                                             benchmark_options.ay_max);
-  std::vector<double> collision_check_time;
-  std::vector<int> num_pyramids;
-  for (int i = 0; i < synthesis_specs.num_scenes; i++) {
-    if (i % 20 == 0) {
-      printf("Processed %d frames so far.\n", i);
-    }
-
-    cv::Mat depth_mat;
-    make_image(camera_intrinsics, synthesis_specs, image_rdgen, depth_mat);
-    DepthImagePlanner planner(depth_mat, camera_intrinsics.depth_scale,
-                              camera_intrinsics.f, camera_intrinsics.cx,
-                              camera_intrinsics.cy,
-                              planner_specs.physical_vehicle_radius,
-                              planner_specs.vehicle_radius_for_planning,
-                              planner_specs.minimum_collision_distance);
-
-    RapidTrajectoryGenerator traj(
-        Vec3(0, 0, 0),
-        Vec3(random_vx(state_rdgen), random_vy(state_rdgen),
-             random_vz(state_rdgen)),
-        Vec3(0, -random_ay(state_rdgen), 0), Vec3(0, 9.81, 0));
-
-    double total_check_time;
-    planner.MeasureCollisionCheckingSpeed(
-        collision_time_options.num_traj,
-        collision_time_options.pyramid_gen_time, traj, total_check_time);
-
-    collision_check_time.push_back(
-        total_check_time / collision_time_options.num_traj);
-    num_pyramids.push_back(planner.GetPyramids().size());
-
-    if (benchmark_options.png_output) {
-      std::string filename = std::to_string(i) + ".png";
-      imwrite(filename, depth_mat);
-    }
-    if (benchmark_options.display) {
-      display_image(
-          depth_mat,
-          benchmark_options.display_range_min / camera_intrinsics.depth_scale,
-          benchmark_options.display_range_max / camera_intrinsics.depth_scale);
-    }
-  }
-
-  benchmark_stats_t stats_coll_check_time = calculate_stats<double>(
-      collision_check_time);
-  root.put("AvgCollCheckTimePerTrajNs", stats_coll_check_time.mean);
-
-  benchmark_stats_t stats_num_pyramids = calculate_stats<int>(num_pyramids);
-  root.put("AvgPyramidsGen", stats_num_pyramids.mean);
-
-  printf("Avg. Collision checking time per traj. = %f ns\n",
-         stats_coll_check_time.mean);
-  printf("Avg. pyramids per frame = %f\n", stats_num_pyramids.mean);
-
-  print_stats(std::cout, "AvgCollCheckTimePerTrajNs", stats_coll_check_time);
-  print_stats(std::cout, "AvgPyramidsGen", stats_num_pyramids);
-
-  std::ofstream json_out("./data/collisionCheckingTime.json");
-  write_json(json_out, root);
-  json_out.close();
-}
-
 static void run_trajectory_coverage_benchmark(
     const camera_intrinsics_t& camera_intrinsics,
     const planner_specs_t& planner_specs,
@@ -427,14 +232,21 @@ static void run_trajectory_coverage_benchmark(
   std::uniform_real_distribution<> random_ay(benchmark_options.ay_min,
                                              benchmark_options.ay_max);
 
-  boost::property_tree::ptree comp_time_ptree, avg_traj_gen_ptree;
+  boost::property_tree::ptree comp_time_ptree, 
+                              avg_traj_gen_ptree, 
+                              avg_collision_free_traj_ptree,
+                              best_cost_ptree,
+                              avg_traj_gen_db_ptree, 
+                              avg_collision_free_traj_db_ptree,
+                              best_cost_db_ptree;
   for (int k = 0; k < traj_coverage_options.num_comp_times; k++) {
     double a = traj_coverage_options.min_comp_time;
     double b = traj_coverage_options.max_comp_time;
     double n = traj_coverage_options.num_comp_times;
     double base = pow(b / a, 1 / (n - 1));  // This increasing computation time geometrically, so we have more resolution at smaller computation times
     double comp_time = a * pow(base, k);  // When k == n-1, compTime = b
-    std::vector<int> num_traj_gen;
+    std::vector<int> num_traj_gen, num_traj_gen_da, num_collision_free_traj, num_collision_free_traj_da;
+    std::vector<double> best_cost, best_cost_da;
     for (int i = 0; i < synthesis_specs.num_scenes; i++) {
       if (i % 20 == 0) {
         printf("Processed %d frames so far.\n", i);
@@ -456,24 +268,26 @@ static void run_trajectory_coverage_benchmark(
 
       Vec3 exploration_direction(0, 0, 1);
       planner.FindFastestTrajRandomCandidates(traj, comp_time,
-                                              exploration_direction);
-
+                                              exploration_direction,
+                                              false);
       num_traj_gen.push_back(planner.GetNumTrajectoriesGenerated());
-
-      if (benchmark_options.png_output) {
-        std::string filename = std::to_string(i) + ".png";
-        imwrite(filename, depth_mat);
-      }
-      if (benchmark_options.display) {
-        display_image(
-            depth_mat,
-            benchmark_options.display_range_min / camera_intrinsics.depth_scale,
-            benchmark_options.display_range_max
-                / camera_intrinsics.depth_scale);
-      }
+      num_collision_free_traj.push_back(planner.GetNumCollisionFreeTrajectories());
+      best_cost.push_back(planner.GetBestCost());
+      planner.FindFastestTrajRandomCandidates(traj, comp_time,
+                                              exploration_direction,
+                                              true);
+      num_traj_gen_da.push_back(planner.GetNumTrajectoriesGenerated());
+      num_collision_free_traj_da.push_back(planner.GetNumCollisionFreeTrajectories());
+      best_cost_da.push_back(planner.GetBestCost());
     }
 
     benchmark_stats_t stats_num_traj_gen = calculate_stats<int>(num_traj_gen);
+    benchmark_stats_t stats_num_collision_free_traj = calculate_stats<int>(num_collision_free_traj);
+    benchmark_stats_t stats_best_cost = calculate_stats<double>(best_cost);
+
+    benchmark_stats_t stats_num_traj_gen_da = calculate_stats<int>(num_traj_gen_da);
+    benchmark_stats_t stats_num_collision_free_traj_db = calculate_stats<int>(num_collision_free_traj_da);
+    benchmark_stats_t stats_best_cost_db = calculate_stats<double>(best_cost_da);
 
     printf("Stats for %f s of computation time:", comp_time);
     print_stats(std::cout, "numTrajGen", stats_num_traj_gen);
@@ -482,14 +296,41 @@ static void run_trajectory_coverage_benchmark(
     comp_time_node.put_value(comp_time);
     comp_time_ptree.push_back(std::make_pair("", comp_time_node));
 
+    // Random sampling output data storaging
     boost::property_tree::ptree avg_traj_gen_node;
     avg_traj_gen_node.put_value(stats_num_traj_gen.mean);
     avg_traj_gen_ptree.push_back(std::make_pair("", avg_traj_gen_node));
 
+    boost::property_tree::ptree avg_collision_free_traj_node;
+    avg_collision_free_traj_node.put_value(stats_num_collision_free_traj.mean);
+    avg_collision_free_traj_ptree.push_back(std::make_pair("", avg_collision_free_traj_node));
+
+    boost::property_tree::ptree best_cost_node;
+    best_cost_node.put_value(stats_best_cost.mean);
+    best_cost_ptree.push_back(std::make_pair("", best_cost_node));
+
+    // Depth-based sampling output data storaging
+    boost::property_tree::ptree avg_traj_gen_db_node;
+    avg_traj_gen_db_node.put_value(stats_num_traj_gen_da.mean);
+    avg_traj_gen_db_ptree.push_back(std::make_pair("", avg_traj_gen_db_node));
+
+    boost::property_tree::ptree avg_collision_free_traj_db_node;
+    avg_collision_free_traj_db_node.put_value(stats_num_collision_free_traj_db.mean);
+    avg_collision_free_traj_db_ptree.push_back(std::make_pair("", avg_collision_free_traj_db_node));
+
+    boost::property_tree::ptree best_cost_db_node;
+    best_cost_db_node.put_value(stats_best_cost_db.mean);
+    best_cost_db_ptree.push_back(std::make_pair("", best_cost_db_node));
+
     root.put_child("CompTime", comp_time_ptree);  // * put_child replaces the node, instead of adding a node like add_child.
     root.put_child("AvgTrajGen", avg_traj_gen_ptree);
+    root.put_child("AvgCollisionFreeTraj", avg_collision_free_traj_ptree);
+    root.put_child("BestCost", best_cost_ptree);
+    root.put_child("DbAvgTrajGen", avg_traj_gen_db_ptree);
+    root.put_child("DbAvgCollisionFreeTraj", avg_collision_free_traj_db_ptree);
+    root.put_child("DbBestCost", best_cost_db_ptree);
 
-    std::ofstream json_out("./data/avgTrajGen.json");
+    std::ofstream json_out("./data/DepthBasedYour.json");
     write_json(json_out, root);
     json_out.close();
   }
@@ -505,8 +346,6 @@ int main(int argc, const char* argv[]) {
     synthesis_specs_t synthesis_specs { };
     benchmark_options_t benchmark_options { };
 
-    conservative_test_options_t conservative_test_options { };
-    collision_time_options_t collision_time_options { };
     traj_coverage_options_t traj_coverage_options { };
 
     options_description desc { "Options" };
@@ -599,24 +438,6 @@ int main(int argc, const char* argv[]) {
     opt("bc-seed",
         value<uint>(&benchmark_options.random_seed)->default_value(0),
         "random seed for initial states");
-
-    opt("maxNumPyramidForConservativenessTest",
-        value<std::vector<int>>(&conservative_test_options.max_num_pyramids)
-            ->multitoken()->default_value(std::vector<int> { 1, 2, 4, 8 },
-                                          "1 2 4 8"),
-        "List of the maximum allowed number of pyramids (for use with CONSERVATIVENESS only)");
-    opt("numTrajForConservativenessTest",
-        value<int>(&conservative_test_options.num_traj)->default_value(1000),
-        "Number of trajectories to use to compute conservativeness (for use with CONSERVATIVENESS only)");
-
-    opt("pyramidGenTimeForCCTest",
-        value<double>(&collision_time_options.pyramid_gen_time)->default_value(
-            0.00181),
-        "Time allocated for generating pyramids (for use with COLLISION_CHECKING_TIME only)");
-    opt("numTrajForCCTest",
-        value<int>(&collision_time_options.num_traj)->default_value(10000),
-        "Number of trajectories to use to time collision checker (for use with COLLISION_CHECKING_TIME only)");
-
     opt("minCompTimeForTCTest",
         value<double>(&traj_coverage_options.min_comp_time)->default_value(
             0.0001),
@@ -686,35 +507,6 @@ int main(int argc, const char* argv[]) {
 
     // Run benchmark and save data
     try {
-      if (benchmark_options.test_type == CONSERVATIVENESS) {
-        // const properties saved first
-        ptree child;
-        for (auto &x : conservative_test_options.max_num_pyramids) {
-          ptree node;
-          node.put_value(x);
-          child.push_back(std::make_pair("", node));
-        }
-        root.add_child("conservative_test_options.max_num_pyramids", child);
-        root.put("conservative_test_options.num_traj",
-                 conservative_test_options.num_traj);
-
-        run_conservativeness_benchmark(camera_intrinsics, planner_specs,
-                                       synthesis_specs, benchmark_options,
-                                       conservative_test_options, root);
-      } else if (benchmark_options.test_type == COLLISION_CHECKING_TIME) {
-        // const properties saved first
-        root.put("collision_time_options.pyramid_gen_time",
-                 collision_time_options.pyramid_gen_time);
-        root.put("collision_time_options.num_traj",
-                 collision_time_options.num_traj);
-
-        run_collision_checking_time_benchmark(camera_intrinsics, planner_specs,
-                                              synthesis_specs,
-                                              benchmark_options,
-                                              collision_time_options, root);
-
-      } else if (benchmark_options.test_type == TRAJECTORY_COVERAGE) {
-        // const properties saved first
         root.put("traj_coverage_options.min_comp_time",
                  traj_coverage_options.min_comp_time);
         root.put("traj_coverage_options.max_comp_time",
@@ -725,9 +517,6 @@ int main(int argc, const char* argv[]) {
         run_trajectory_coverage_benchmark(camera_intrinsics, planner_specs,
                                           synthesis_specs, benchmark_options,
                                           traj_coverage_options, root);
-      } else {
-        printf("Invalid choice of benchmarking test to run. Aborting.\n");
-      }
     } catch (const std::exception& e) {
       std::cerr << e.what() << std::endl;
     }
