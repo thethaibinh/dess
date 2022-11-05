@@ -1,8 +1,9 @@
 # Depth-based Sampling and Steering Constraints for Memoryless Local Planners
 
-This repository contains source code implementing the depth-based algorithm described in the paper.
+This repository contains source code implementing the depth-based algorithm described in the paper "DEpth-based Sampling and Steering Constraints for Memoryless Local Planners", which has been submitted to a journal and is under review. Please don't hesitate to contact the corresponding author [Thai Binh Nguyen](mailto:thethaibinh@gmail.com) if you have any requests.
+
 ## Acknowledgements
-This project is inspired by [RAPPIDS](https://github.com/nlbucki/RAPPIDS) from [Nathan Bucki](nathan_bucki@berkeley.edu) et al. We use some components from RAPPIDS.
+This project is inspired by [RAPPIDS](https://github.com/nlbucki/RAPPIDS) from [Nathan Bucki](mailto:nathan_bucki@berkeley.edu) et al. We use some components from RAPPIDS.
 ## Getting Started
 
 First clone the repository and enter the created folder:
